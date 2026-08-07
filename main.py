@@ -2,7 +2,10 @@ import argparse
 import re
 
 import pandas as pd
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, numbers
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from tqdm import tqdm
 
 from normalize import normalize_text
 from constants.card_bins import CARD_BANKS
@@ -19,17 +22,15 @@ NATIONAL_CODE_RE = re.compile(
     re.IGNORECASE,
 )
 
-def clean_card(value: str) -> str:
-    """فقط ارقام شماره کارت را نگه می‌دارد."""
-    return re.sub(r"\D", "", value)
+def clean_card(val: str) -> str:
+    return re.sub(r"\D", "", val)
 
 
-def clean_iban(value: str) -> str:
-    """فاصله‌ها را حذف و حروف را بزرگ می‌کند (IR باید حتماً بزرگ باشد)."""
-    return re.sub(r"[^A-Za-z0-9]", "", value).upper()
+def clean_iban(val: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", val).upper()
 
-def luhn_check(card_number: str) -> bool:
-    digits = [int(d) for d in card_number[::-1]]
+def luhn_check(card: str) -> bool:
+    digits = [int(d) for d in card[::-1]]
     total = 0
     for i, d in enumerate(digits):
         if i % 2 == 1:
@@ -43,49 +44,41 @@ def luhn_check(card_number: str) -> bool:
 def iban_check(iban: str) -> bool:
     if len(iban) != 26 or not iban.startswith("IR"):
         return False
-
     rearranged = iban[4:] + iban[:4]
-    numeric_chars = []
+    num_str = ""
     for ch in rearranged:
         if ch.isdigit():
-            numeric_chars.append(ch)
+            num_str += ch
         elif ch.isalpha():
-            numeric_chars.append(str(ord(ch.upper()) - ord("A") + 10))
+            num_str += str(ord(ch.upper()) - 55)
         else:
             return False
+    return int(num_str) % 97 == 1
 
-    numeric_string = "".join(numeric_chars)
-    try:
-        return int(numeric_string) % 97 == 1
-    except ValueError:
-        return False
 
 def get_card_bank(card: str) -> str:
     return CARD_BANKS.get(card[:6], "نامشخص") if len(card) >= 6 else "نامشخص"
 
 
 def get_iban_bank(iban: str) -> str:
-    if not iban.startswith("IR") or len(iban) < 7:
-        return "نامشخص"
-    bank_code = iban[4:7]
-    return IBAN_BANKS.get(bank_code, "نامشخص")
+    if iban.startswith("IR") and len(iban) >= 7:
+        return IBAN_BANKS.get(iban[4:7], "نامشخص")
+    return "نامشخص"
+
 
 def extract_valid_card(text: str):
-    """در متن دنبال همه‌ی الگوهای شبیه کارت می‌گردد و اولین موردی که
-    Luhn-valid است را برمی‌گرداند. اگر هیچ‌کدام معتبر نبودند، None."""
     for match in CARD_RE.finditer(text):
-        candidate = clean_card(match.group(0))
-        if len(candidate) == 16 and luhn_check(candidate):
-            return candidate
+        c = clean_card(match.group(0))
+        if len(c) == 16 and luhn_check(c):
+            return c
     return None
 
 
 def extract_valid_iban(text: str):
-    """همان منطق extract_valid_card، اما برای شبا با اعتبارسنجی mod-97."""
     for match in IBAN_RE.finditer(text):
-        candidate = clean_iban(match.group(0))
-        if iban_check(candidate):
-            return candidate
+        c = clean_iban(match.group(0))
+        if iban_check(c):
+            return c
     return None
 
 
@@ -106,29 +99,24 @@ def process_transactions(
     df = pd.read_excel(input_file, sheet_name=sheet_name, dtype=str)
 
     if desc_column not in df.columns:
-        raise ValueError(
-            f"ستون شرح '{desc_column}' یافت نشد. ستون‌های موجود: {list(df.columns)}"
-        )
+        raise ValueError(f"ستون '{desc_column}' یافت نشد.")
 
     if type_column and deposit_keyword:
         if type_column in df.columns:
-            mask = (
-                df[type_column]
-                .astype(str)
-                .str.strip()
-                .str.contains(deposit_keyword.strip(), case=False, na=False)
+            mask = df[type_column].str.strip().str.contains(
+                deposit_keyword.strip(), case=False, na=False
             )
             df = df[mask].copy()
             print(f"تعداد ردیف‌های واریزی: {len(df)}")
         else:
             print(f"هشدار: ستون '{type_column}' یافت نشد. تمام ردیف‌ها پردازش می‌شوند.")
-    else:
-        print("بدون فیلتر نوع تراکنش – تمام ردیف‌ها پردازش می‌شوند.")
 
-    cards, ibans, national_codes = [], [], []
-    card_banks, iban_banks = [], []
+    cards, card_banks = [], []
+    ibans, iban_banks = [], []
+    national_codes = []
 
-    for _, row in df.iterrows():
+    tqdm.pandas(desc="در حال پردازش ردیف‌ها")
+    for _, row in tqdm(df.iterrows(), total=len(df)):
         text = normalize_text(row[desc_column])
 
         card = extract_valid_card(text)
@@ -150,34 +138,64 @@ def process_transactions(
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Sheet1", index=False)
         ws = writer.sheets["Sheet1"]
-        align = Alignment(horizontal="right")
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column):
+
+        align = Alignment(horizontal="right", vertical="center")
+        ws.sheet_view.rightToLeft = True
+
+        for col_idx, col_name in enumerate(df.columns, 1):
+            width = max(len(str(col_name)) * 1.3, 12)
+            ws.column_dimensions[get_column_letter(col_idx)].width = min(width, 35)
+
+        last_row = len(df) + 1
+        last_col = get_column_letter(len(df.columns))
+        table_ref = f"A1:{last_col}{last_row}"
+        tab = Table(displayName="Transactions", ref=table_ref)
+
+        style = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        tab.tableStyleInfo = style
+        ws.add_table(tab)
+
+        for row in ws.iter_rows(min_row=2, max_row=last_row, max_col=len(df.columns)):
             for cell in row:
                 cell.alignment = align
-        ws.sheet_view.rightToLeft = True
+
+        ws.freeze_panes = "A2"
 
     print("✅ استخراج با موفقیت انجام شد.")
     print(f"📁 خروجی: {output_file}")
-    print(f"🔢 شماره کارت معتبر: {df['شماره کارت'].notna().sum()}")
-    print(f"🔢 شبای معتبر: {df['شماره شبا'].notna().sum()}")
-    print(f"🔢 کد ملی: {df['کد ملی'].notna().sum()}")
+    print(f"🔢 کارت‌های معتبر: {df['شماره کارت'].notna().sum()}")
+    print(f"🔢 شباهای معتبر: {df['شماره شبا'].notna().sum()}")
+    print(f"🔢 کدهای ملی: {df['کد ملی'].notna().sum()}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="استخراج شماره کارت، شبا و کد ملی از شرح تراکنش‌های بانکی"
+    parser = argparse.ArgumentParser(description="استخراج سریع اطلاعات بانکی از فایل اکسل")
+    parser.add_argument("input_file", help="فایل اکسل ورودی")
+    parser.add_argument("sheet_name", help="نام شیت")
+    parser.add_argument("desc_column", help="ستون شرح تراکنش")
+    parser.add_argument("output_file", help="فایل خروجی")
+    parser.add_argument(
+        "--type-column",
+        default=None,
+        help="ستون نوع تراکنش (مثلاً 'نوع') – برای فیلتر واریز الزامی است",
     )
-    parser.add_argument("input_file")
-    parser.add_argument("sheet_name")
-    parser.add_argument("desc_column")
-    parser.add_argument("output_file")
-    parser.add_argument("--type-column", default="نوع")
-    parser.add_argument("--deposit-keyword", default="واریز")
-    parser.add_argument("--no-filter", action="store_true")
+    parser.add_argument("--deposit-keyword", default="واریز", help="کلیدواژه واریز")
+    parser.add_argument("--no-filter", action="store_true", help="نادیده گرفتن فیلتر واریز")
 
     args = parser.parse_args()
-    type_col = None if args.no_filter else args.type_column
-    deposit_kw = None if args.no_filter else args.deposit_keyword
+
+    if args.no_filter:
+        type_col = None
+        deposit_kw = None
+    else:
+        type_col = args.type_column
+        deposit_kw = args.deposit_keyword if type_col else None
 
     process_transactions(
         args.input_file,
