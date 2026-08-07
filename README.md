@@ -48,7 +48,7 @@ Iranian-Bank-Transaction-Extractor/
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/Iranian-Bank-Transaction-Extractor.git
+git clone https://github.com/MSoheil-Mohammadi/Iranian-Bank-Transaction-Extractor.git
 cd Iranian-Bank-Transaction-Extractor
 python3 -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\Activate.ps1
