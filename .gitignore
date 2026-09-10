@@ -1,34 +1,46 @@
-# --- Python ---
+# ============ Python ============
 __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
 build/
 dist/
+*.so
 
-# --- Virtual environments ---
+# ============ Virtual environments ============
 venv/
 .venv/
 env/
 ENV/
 
-# --- IDE / Editor ---
+# ============ IDE / Editor ============
 .vscode/
 .idea/
 *.swp
+*.swo
 
-# --- OS ---
+# ============ OS ============
 .DS_Store
 Thumbs.db
 
-# --- Data files ---
-# این پروژه با فایل‌های اکسل تراکنش بانکی واقعی کار می‌کند که ممکن است
-# اطلاعات حساس (شماره کارت، شبا، کد ملی) داشته باشند. این فایل‌ها هرگز
-# نباید commit شوند — نه ورودی، نه خروجی.
+# ============ Test / Coverage ============
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ============ Project outputs ============
+# فایل‌های خروجی اکسل و CSV
 *.xlsx
 *.xlsm
 *.xls
 *.csv
+
+# ولی نمونه‌های پوشهٔ examples حتماً باشن
 !examples/*.xlsx
 !examples/*.csv
 !examples/*.xlsm
+
+# ============ Trash / temporary ============
+trash/
+temp/
+tmp/
