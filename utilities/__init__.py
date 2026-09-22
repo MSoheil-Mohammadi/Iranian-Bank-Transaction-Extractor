@@ -7,9 +7,14 @@
     - الگوریتم Luhn برای اعتبارسنجی شماره کارت بانکی
     - الگوریتم Mod 97 برای اعتبارسنجی شبا (IBAN)
     - الگوریتم چک‌سام برای اعتبارسنجی کد ملی ایران
+    - پاک‌سازی و بررسی طول شماره سپرده
     - زیرپکیج text برای نرمال‌سازی متن فارسی/عربی
 """
 
+from .deposit import (
+    clean_deposit_number,
+    is_valid_deposit_number,
+)
 from .iban import clean_iban, iban_check, is_valid_iban
 from .luhn import clean_card, is_valid_card, luhn_check
 from .national_id import (
@@ -31,4 +36,7 @@ __all__ = [
     "national_code_check",
     "clean_national_code",
     "is_valid_national_code",
+    # شماره سپرده
+    "clean_deposit_number",
+    "is_valid_deposit_number",
 ]

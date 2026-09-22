@@ -2,15 +2,17 @@
 استخراج اطلاعات بانکی از فایل اکسل یا CSV تراکنش‌ها.
 
 این ماژول فایل ورودی را می‌خواند، ستون «شرح تراکنش» را نرمال‌سازی
-می‌کند و شماره کارت، شماره شبا و کد ملی را با اعتبارسنجی استخراج
-می‌کند. سپس بانک صادرکننده را از روی BIN یا کد شبا تشخیص می‌دهد
-و خروجی را به‌صورت اکسل (با چیدمان راست‌به‌چپ) یا CSV ذخیره می‌کند.
+می‌کند و شماره کارت، شماره شبا، کد ملی و شماره سپرده را با
+اعتبارسنجی استخراج می‌کند. سپس بانک صادرکننده را از روی BIN یا کد
+شبا تشخیص می‌دهد و خروجی را به‌صورت اکسل (با چیدمان راست‌به‌چپ)
+یا CSV ذخیره می‌کند.
 
 قابلیت‌ها:
     - خواندن فایل ورودی با فرمت xlsx/xlsm/xls یا csv
     - نوشتن فایل خروجی با فرمت xlsx یا csv
     - فیلتر کردن تراکنش‌های واریزی بر اساس ستون نوع تراکنش
-    - اعتبارسنجی کارت با Luhn و شبا با Mod 97 و کد ملی با چک‌سام
+    - اعتبارسنجی کارت با Luhn، شبا با Mod 97، کد ملی با چک‌سام
+    - استخراج شماره سپرده (۱۸ رقمی) برای بلو بانک و مشابه
     - تشخیص بانک از روی BIN کارت و کد بانک در شبا
     - استایل‌دهی ساده برای فایل‌های بزرگ (بیش از حد آستانه)
 
@@ -37,6 +39,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from tqdm import tqdm
 
 from constants import get_bank_by_bin, get_bank_by_iban_code
+from utilities.deposit import extract_deposit_number
 from utilities.iban import IBAN_PATTERN, clean_iban, iban_check
 from utilities.luhn import CARD_PATTERN, clean_card, luhn_check
 from utilities.national_id import (
@@ -46,6 +49,7 @@ from utilities.national_id import (
 )
 from utilities.text import normalize_text
 
+
 # ---------------------------------------------------------------------------
 # ثابت‌ها
 # ---------------------------------------------------------------------------
@@ -54,16 +58,12 @@ from utilities.text import normalize_text
 # ردیف، استایل‌دهی جدول و تراز سلول‌ها اعمال نمی‌شود تا سرعت حفظ شود.
 STYLE_THRESHOLD = 50_000
 
-
 # ---------------------------------------------------------------------------
 # توابع استخراج
 # ---------------------------------------------------------------------------
 
 def extract_valid_card(text: str) -> str | None:
     """استخراج اولین شماره کارت معتبر از متن.
-
-    ابتدا با Regex کاندیدها پیدا می‌شوند، سپس هر کاندید با الگوریتم
-    Luhn اعتبارسنجی می‌شود.
 
     Args:
         text: متن نرمال‌شده تراکنش.
@@ -80,9 +80,6 @@ def extract_valid_card(text: str) -> str | None:
 
 def extract_valid_iban(text: str) -> str | None:
     """استخراج اولین شماره شبا معتبر از متن.
-
-    ابتدا با Regex کاندیدها پیدا می‌شوند، سپس هر کاندید با الگوریتم
-    Mod 97 اعتبارسنجی می‌شود.
 
     Args:
         text: متن نرمال‌شده تراکنش.
@@ -101,8 +98,7 @@ def extract_national_code(text: str) -> str | None:
     """استخراج اولین کد ملی معتبر از متن.
 
     ابتدا کدهایی که با IRR همراه هستند بررسی می‌شوند؛ در صورت نبود،
-    همهٔ اعداد ۱۰ رقمی متن بررسی می‌شوند. هر کاندید با چک‌سام کد ملی
-    اعتبارسنجی می‌شود.
+    همهٔ اعداد ۱۰ رقمی متن بررسی می‌شوند.
 
     Args:
         text: متن نرمال‌شده (ارقام ASCII).
@@ -110,13 +106,12 @@ def extract_national_code(text: str) -> str | None:
     Returns:
         کد ملی ۱۰ رقمی معتبر یا None.
     """
-    # اولویت اول: کدهای همراه با IRR
+
     for match in IRR_NATIONAL_CODE_PATTERN.finditer(text):
         candidate = match.group(1) or match.group(2)
         if national_code_check(candidate):
             return candidate
 
-    # اولویت دوم: هر عدد ۱۰ رقمی معتبر از نظر چک‌سام
     for match in NATIONAL_CODE_PATTERN.finditer(text):
         candidate = match.group(0)
         if national_code_check(candidate):
@@ -124,30 +119,27 @@ def extract_national_code(text: str) -> str | None:
 
     return None
 
-
 def extract_row(description) -> tuple:
     """استخراج همهٔ اطلاعات یک ردیف در یک فراخوانی.
-
-    این تابع در یک پاس، متن را نرمال‌سازی می‌کند و هر سه شناسه
-    (کارت، شبا، کد ملی) را استخراج و اعتبارسنجی می‌کند. همچنین
-    بانک صادرکنندهٔ کارت و شبا را تشخیص می‌دهد.
 
     Args:
         description: مقدار خام ستون شرح تراکنش.
 
     Returns:
-        تاپلی به شکل (شماره کارت، بانک کارت، شماره شبا، بانک شبا، کد ملی).
+        تاپلی به شکل (شماره کارت، بانک کارت، شماره شبا، بانک شبا،
+        کد ملی، شماره سپرده).
     """
     text = normalize_text(description)
 
     card = extract_valid_card(text)
     iban = extract_valid_iban(text)
     national_code = extract_national_code(text)
+    deposit = extract_deposit_number(text)
 
     card_bank = get_bank_by_bin(card) if card else None
     iban_bank = get_bank_by_iban_code(iban) if iban else None
 
-    return card, card_bank, iban, iban_bank, national_code
+    return card, card_bank, iban, iban_bank, national_code, deposit
 
 
 # ---------------------------------------------------------------------------
@@ -209,10 +201,6 @@ def write_output_file(df: pd.DataFrame, output_file: str) -> None:
 def _write_excel(df: pd.DataFrame, output_file: str) -> None:
     """نوشتن فایل اکسل با چیدمان راست‌به‌چپ.
 
-    برای فایل‌های کوچک‌تر از STYLE_THRESHOLD، جدول و تراز سلول‌ها
-    اعمال می‌شود. برای فایل‌های بزرگ‌تر، فقط عرض ستون‌ها تنظیم
-    می‌شود تا سرعت نوشتن حفظ شود.
-
     Args:
         df: دیتافریم خروجی.
         output_file: مسیر فایل اکسل خروجی.
@@ -222,12 +210,10 @@ def _write_excel(df: pd.DataFrame, output_file: str) -> None:
         ws = writer.sheets["Sheet1"]
         ws.sheet_view.rightToLeft = True
 
-        # تنظیم عرض ستون‌ها (همیشه، چون سریع است)
         for col_idx, col_name in enumerate(df.columns, 1):
             width = max(len(str(col_name)) * 1.3, 12)
             ws.column_dimensions[get_column_letter(col_idx)].width = min(width, 35)
 
-        # اعمال استایل کامل فقط برای فایل‌های کوچک
         if len(df) <= STYLE_THRESHOLD:
             align = Alignment(horizontal="right", vertical="center")
             last_row = len(df) + 1
@@ -316,6 +302,7 @@ def process_transactions(
     df["شماره شبا"] = [r[2] for r in results]
     df["بانک شبا"] = [r[3] for r in results]
     df["کد ملی"] = [r[4] for r in results]
+    df["شماره سپرده"] = [r[5] for r in results]
 
     # نوشتن خروجی
     write_output_file(df, output_file)
@@ -325,6 +312,7 @@ def process_transactions(
     print(f"🔢 کارت‌های معتبر: {df['شماره کارت'].notna().sum():,}")
     print(f"🔢 شباهای معتبر: {df['شماره شبا'].notna().sum():,}")
     print(f"🔢 کدهای ملی: {df['کد ملی'].notna().sum():,}")
+    print(f"🔢 شماره‌های سپرده: {df['شماره سپرده'].notna().sum():,}")
 
 
 # ---------------------------------------------------------------------------

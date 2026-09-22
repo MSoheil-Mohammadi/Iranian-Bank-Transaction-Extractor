@@ -1,9 +1,9 @@
 # Iranian Bank Transaction Extractor
 
 A command-line tool that extracts and validates card numbers, IBANs
-(Sheba), and national IDs from the free-text description field of
-Iranian bank transaction exports, identifies the issuing bank for each,
-and writes a clean, RTL-formatted Excel or CSV report.
+(Sheba), national IDs, and deposit numbers from the free-text description
+field of Iranian bank transaction exports, identifies the issuing bank
+for each, and writes a clean, RTL-formatted Excel or CSV report.
 
 Built to solve a real problem: bank transaction exports typically dump
 all of this information into a single unstructured description column,
@@ -25,6 +25,11 @@ verifiable data.
 - **Bank identification** — resolves the issuing bank from the card BIN
   (first 6 digits) or the IBAN bank code (3-digit segment), against
   curated lookup tables for major Iranian banks.
+- **Deposit number extraction** — extracts 18-digit deposit numbers
+  (BLOO Bank / Saman) using context-aware label matching: positive
+  labels ("شماره سپرده") accept the number, negative labels
+  ("شماره پیگیری", "شماره سند") reject it. Handles grouped numbers
+  under a single label correctly.
 - **Transaction type filtering** — optionally restrict processing to a
   specific transaction type (e.g. deposits only).
 - **CSV and Excel support** — reads and writes both `.xlsx` and `.csv`.
@@ -47,6 +52,7 @@ Iranian-Bank-Transaction-Extractor/
 │   ├── luhn.py                #   Luhn (Mod 10) for card numbers
 │   ├── iban.py                #   Mod 97 (ISO 13616) for Sheba
 │   ├── national_id.py         #   Iranian national ID checksum
+│   ├── deposit.py             #   18-digit deposit number extraction
 │   ├── text/                  #   Persian/Arabic text normalization
 │   │   ├── digits.py
 │   │   ├── letters.py
@@ -110,13 +116,14 @@ python3 main.py transactions.xlsx Sheet1 شرح output.csv
 
 The output contains all original columns plus:
 
-| Column       | Description                                 |
-| ------------ | ------------------------------------------- |
-| `شماره کارت` | Extracted card number (Luhn-valid only)     |
-| `بانک کارت`  | Card-issuing bank                           |
-| `شماره شبا`  | Extracted IBAN (Mod 97-valid only)          |
-| `بانک شبا`   | IBAN-issuing bank                           |
-| `کد ملی`     | Extracted national ID (checksum-valid only) |
+| Column        | Description                                 |
+| ------------- | ------------------------------------------- |
+| `شماره کارت`  | Extracted card number (Luhn-valid only)     |
+| `بانک کارت`   | Card-issuing bank                           |
+| `شماره شبا`   | Extracted IBAN (Mod 97-valid only)          |
+| `بانک شبا`    | IBAN-issuing bank                           |
+| `کد ملی`      | Extracted national ID (checksum-valid only) |
+| `شماره سپرده` | Extracted 18-digit deposit number (BLOO)    |
 
 ## How it works
 
@@ -126,12 +133,15 @@ raw description text
 normalize_text()            — Unicode NFKC, digit/letter normalization,
                               zero-width character stripping
         ↓
-regex candidate search      — finds ALL card/IBAN-shaped substrings,
-                              not just the first
+regex candidate search      — finds ALL card/IBAN/deposit-shaped
+                              substrings, not just the first
         ↓
 checksum validation         — Luhn for cards, Mod 97 for IBAN,
                               national ID checksum for codes;
                               first valid candidate wins
+        ↓
+label-based extraction      — deposit numbers use positive/negative
+                              label matching (no checksum available)
         ↓
 bank lookup                 — BIN / bank-code → bank name
         ↓
@@ -154,7 +164,8 @@ Excel or CSV output (RTL)
 The extraction regex patterns are written against the transaction
 description format actually observed in this project's data. If your
 bank's export uses a meaningfully different format, you may need to
-adjust the patterns in `main.py`.
+adjust the patterns in `main.py` or the label sets in
+`utilities/deposit.py`.
 
 ## License
 
@@ -164,9 +175,9 @@ MIT — see [LICENSE](LICENSE).
 
 ## فارسی
 
-ابزاری خط‌فرمانی برای استخراج و اعتبارسنجی شماره کارت، شماره شبا و
-کد ملی از ستون شرح تراکنش‌های بانکی، تشخیص بانک صادرکننده، و تولید
-خروجی Excel یا CSV با چیدمان راست‌به‌چپ.
+ابزاری خط‌فرمانی برای استخراج و اعتبارسنجی شماره کارت، شماره شبا،
+کد ملی و شماره سپرده از ستون شرح تراکنش‌های بانکی، تشخیص بانک
+صادرکننده، و تولید خروجی Excel یا CSV با چیدمان راست‌به‌چپ.
 
 ### ویژگی‌ها
 
@@ -176,6 +187,10 @@ MIT — see [LICENSE](LICENSE).
   **Luhn** (برای کارت)، **ISO 7064 MOD 97-10** (برای شبا)، یا
   **چک‌سام کد ملی ایران** (برای کد ملی) بررسی می‌شود تا false
   positive به حداقل برسد
+- **استخراج شماره سپرده ۱۸ رقمی** (بلو بانک / سامان) با منطق
+  برچسب‌محور: برچسب‌های مثبت («شماره سپرده») عدد را قبول می‌کنند و
+  برچسب‌های منفی («شماره پیگیری»، «شماره سند») عدد را رد می‌کنند.
+  گروهی از اعداد زیر یک برچسب منفی به‌درستی رد می‌شوند
 - تشخیص بانک صادرکننده از روی BIN کارت یا کد بانک در شبا
 - امکان فیلتر کردن بر اساس نوع تراکنش
 - پشتیبانی از ورودی و خروجی CSV و Excel (فرمت بر اساس پسوند فایل
@@ -194,6 +209,7 @@ Iranian-Bank-Transaction-Extractor/
 │   ├── luhn.py                #   الگوریتم Luhn برای کارت بانکی
 │   ├── iban.py                #   الگوریتم Mod 97 برای شبا
 │   ├── national_id.py         #   چک‌سام کد ملی ایران
+│   ├── deposit.py             #   استخراج شماره سپرده ۱۸ رقمی
 │   ├── text/                  #   نرمال‌سازی متن فارسی/عربی
 │   └── README.md
 ├── constants/                 # جدول‌های دادهٔ ثابت
@@ -218,4 +234,5 @@ python3 main.py transactions.xlsx Sheet1 شرح output.xlsx
 
 الگوهای Regex بر اساس فرمت تراکنش‌های مشاهده‌شده در داده‌ی این پروژه
 نوشته شده‌اند. اگر فرمت اکسپورت بانک دیگری تفاوت معناداری داشته باشد،
-ممکن است لازم باشد الگوها را در `main.py` تنظیم کنی.
+ممکن است لازم باشد الگوها را در `main.py` یا مجموعه‌های برچسب در
+`utilities/deposit.py` تنظیم کنی.
